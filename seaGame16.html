@@ -1,0 +1,590 @@
+[[Welcome]] | [[seaGame02]] >>
+
+```html
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>世界地図 航行ゲーム（Battle Mode）</title>
+  <style>
+    body {
+      margin: 0;
+      background: #0b1d2a;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      color: white;
+      font-family: sans-serif;
+      overflow: hidden;
+    }
+    canvas {
+      border: 2px solid #ffffff44;
+      background: #1e90ff; /* 海 */
+      box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .ui-layer {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      padding: 10px 15px;
+      background: rgba(0, 0, 0, 0.5);
+      border-radius: 8px;
+      font-size: 20px;
+      font-weight: bold;
+      text-shadow: 2px 2px 2px black;
+      pointer-events: none;
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      z-index: 10;
+    }
+    #fireButton {
+      position: absolute;
+      bottom: 80px;
+      right: 20px;
+      width: 100px;
+      height: 100px;
+      background: rgba(255, 0, 0, 0.5);
+      border: 3px solid white;
+      border-radius: 50%;
+      color: white;
+      font-size: 20px;
+      font-weight: bold;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      user-select: none;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    .hint {
+      position: absolute;
+      bottom: 20px;
+      opacity: 0.8;
+      font-size: 14px;
+      background: rgba(0,0,0,0.5);
+      padding: 5px 10px;
+      border-radius: 4px;
+      pointer-events: none;
+    }
+    #gameOverScreen {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.8);
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      font-size: 48px;
+      color: red;
+      font-weight: bold;
+    }
+    button {
+      margin-top: 20px;
+      padding: 10px 20px;
+      font-size: 20px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="ui-layer">
+    Lives: <span id="lifeDisplay">5</span> | 
+    Score: <span id="scoreDisplay">0</span> | 
+    High Score: <span id="highScoreHUD">0</span>
+  </div>
+  <canvas id="game"></canvas>
+  <div class="hint">← ↑ → ↓: 移動 | Space: 発射 | タップ: 移動 & FIRE</div>
+  <div id="fireButton">FIRE</div>
+  
+  <div id="gameOverScreen">
+    GAME OVER
+    <div style="font-size: 24px; color: white; margin: 10px 0;">
+      Score: <span id="finalScore">0</span><br>
+      Best: <span id="highScoreDisplay">0</span>
+    </div>
+    <button onclick="location.reload()">RETRY</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const lifeDisplay = document.getElementById("lifeDisplay");
+    const scoreDisplay = document.getElementById("scoreDisplay");
+    const highScoreHUD = document.getElementById("highScoreHUD");
+    const finalScoreDisplay = document.getElementById("finalScore");
+    const highScoreDisplay = document.getElementById("highScoreDisplay");
+    const gameOverScreen = document.getElementById("gameOverScreen");
+    const fireBtn = document.getElementById("fireButton");
+
+    // キャンバスサイズ調整 (Resize Canvas)
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    // ★設定: 拡大率
+    const SCALE = 4;
+    
+    // 元の地図サイズ（900x450想定）
+    const BASE_WIDTH = 900;
+    const BASE_HEIGHT = 450;
+
+    // ワールドサイズ
+    const worldWidth = BASE_WIDTH * SCALE;
+    const worldHeight = BASE_HEIGHT * SCALE;
+
+    // ゲーム状態
+    let lives = 5;
+    let score = 0;
+    let highScore = localStorage.getItem("seaGame_highScore") || 0;
+    
+    // HUDのハイスコア更新
+    highScoreHUD.textContent = highScore;
+
+    let isGameOver = false;
+    let lastSpawnTime = 0;
+    let spawnInterval = 5000; // 初期5秒
+    const MIN_SPAWN_INTERVAL = 1500; // 最速1.5秒
+    const SPAWN_INTERVAL_DECREMENT = 100; // 1回ごとに100ms短縮
+
+    // 簡易的な世界地図（ポリゴンデータ）
+    const rawLandmasses = [
+      // --- North America (北米) ---
+      [
+        {x: 60, y: 50}, {x: 150, y: 30}, {x: 230, y: 25}, {x: 300, y: 35}, 
+        {x: 280, y: 80}, {x: 240, y: 120}, {x: 270, y: 150}, {x: 290, y: 180}, 
+        {x: 240, y: 220}, {x: 200, y: 240}, {x: 180, y: 200}, 
+        {x: 170, y: 150}, {x: 150, y: 120}, {x: 100, y: 130}, {x: 60, y: 80}
+      ],
+      // --- South America (南米) ---
+      [
+        {x: 210, y: 240}, {x: 280, y: 250}, {x: 320, y: 280}, {x: 340, y: 340}, 
+        {x: 290, y: 440}, {x: 270, y: 445}, 
+        {x: 260, y: 380}, {x: 240, y: 320}, {x: 220, y: 270}
+      ],
+      // --- Europe (欧州) ---
+      [
+        {x: 420, y: 60}, {x: 460, y: 50}, {x: 490, y: 70}, 
+        {x: 480, y: 90}, {x: 450, y: 100}, {x: 430, y: 90}
+      ],
+      // --- Asia (アジア) ---
+      [
+        {x: 500, y: 60}, {x: 600, y: 50}, {x: 750, y: 60}, {x: 820, y: 55}, 
+        {x: 840, y: 100}, {x: 800, y: 130}, {x: 760, y: 160}, {x: 720, y: 180}, 
+        {x: 700, y: 220}, {x: 660, y: 200}, 
+        {x: 620, y: 180}, {x: 580, y: 190}, {x: 550, y: 170}, 
+        {x: 520, y: 150}
+      ],
+      // --- Africa (アフリカ) ---
+      [
+        {x: 430, y: 110}, {x: 510, y: 120}, {x: 550, y: 150}, 
+        {x: 580, y: 250}, 
+        {x: 540, y: 380}, {x: 500, y: 400}, {x: 480, y: 380}, 
+        {x: 460, y: 300}, {x: 400, y: 250}, {x: 410, y: 180}
+      ],
+      // --- Australia (オーストラリア) ---
+      [
+        {x: 720, y: 300}, {x: 780, y: 290}, {x: 830, y: 320},
+        {x: 820, y: 380}, {x: 750, y: 390}, {x: 700, y: 350}
+      ],
+      // --- Antarctica (南極) ---
+      [
+        {x: 100, y: 425}, {x: 400, y: 430}, {x: 800, y: 420}, {x: 850, y: 440},
+        {x: 50, y: 445}
+      ],
+    ];
+
+    // 拡大された座標データを生成
+    const landmasses = rawLandmasses.map(poly => 
+      poly.map(p => ({ x: p.x * SCALE, y: p.y * SCALE }))
+    );
+
+    const ship = {
+      x: 100 * SCALE,
+      y: 200 * SCALE,
+      size: 10,
+      speed: 4,
+      vx: 0,
+      vy: 0,
+      invincible: 0,
+      targetX: null,
+      targetY: null,
+      activeTarget: false
+    };
+
+    // 敵船の定義
+    let enemies = [];
+    function spawnEnemy() {
+      for (let i = 0; i < 20; i++) {
+        const rx = Math.random() * worldWidth;
+        const ry = Math.random() * worldHeight;
+        // プレイヤーから離れた場所にスポーン
+        const distToPlayer = Math.sqrt((rx - ship.x)**2 + (ry - ship.y)**2);
+        if (!isOnLand(rx, ry) && distToPlayer > 400) {
+          enemies.push({
+            x: rx,
+            y: ry,
+            size: 15,
+            speed: 2 + Math.random(),
+            lastShot: 0,
+            shotInterval: 1500 + Math.random() * 1000
+          });
+          return;
+        }
+      }
+    }
+    // 初期敵
+    spawnEnemy();
+
+    let enemyBullets = [];
+    let playerBullets = [];
+
+    // プレイヤー射撃
+    function firePlayerBullet() {
+      if (isGameOver) return;
+      
+      let targetAngle = null;
+      let minFacingDist = 600; // 索敵範囲
+
+      // 最も近い敵を探す (Search for nearest enemy)
+      enemies.forEach(e => {
+        const dx = e.x - ship.x;
+        const dy = e.y - ship.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < minFacingDist) {
+          minFacingDist = dist;
+          targetAngle = Math.atan2(dy, dx);
+        }
+      });
+
+      let angle;
+      if (targetAngle !== null) {
+        // オートエイム発動
+        angle = targetAngle;
+      } else {
+        // 近くに敵がいない場合は進行方向 (Fallback to movement direction)
+        angle = -Math.PI / 2; // デフォルト上
+        if (ship.vx !== 0 || ship.vy !== 0) {
+          angle = Math.atan2(ship.vy, ship.vx);
+        } else if (ship.activeTarget) {
+          angle = Math.atan2(ship.targetY - ship.y, ship.targetX - ship.x);
+        }
+      }
+      
+      playerBullets.push({
+        x: ship.x,
+        y: ship.y,
+        vx: Math.cos(angle) * 8,
+        vy: Math.sin(angle) * 8,
+        life: 100
+      });
+    }
+
+    const keys = {};
+
+    window.addEventListener("keydown", (e) => {
+      keys[e.key] = true;
+      if (e.key === " ") firePlayerBullet();
+    });
+    window.addEventListener("keyup", (e) => (keys[e.key] = false));
+
+    // FIREボタンイベント
+    fireBtn.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      firePlayerBullet();
+    });
+
+    // タッチ/クリック移動 (Touch/Click Movement)
+    canvas.addEventListener("pointerdown", (e) => {
+      // 座標変換 (Canvas座標 -> World座標)
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      
+      const clickX = (e.clientX - rect.left) * scaleX;
+      const clickY = (e.clientY - rect.top) * scaleY;
+
+      // 現在のカメラ位置を計算 (draw関数と同じロジック)
+      let camX = ship.x - canvas.width / 2;
+      let camY = ship.y - canvas.height / 2;
+      camX = Math.max(0, Math.min(worldWidth - canvas.width, camX));
+      camY = Math.max(0, Math.min(worldHeight - canvas.height, camY));
+
+      // ワールド座標としてのターゲットを設定
+      ship.targetX = clickX + camX;
+      ship.targetY = clickY + camY;
+      ship.activeTarget = true;
+    });
+
+    // Point in Polygon Algorithm
+    function pointInPolygon(x, y, poly) {
+      let inside = false;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const xi = poly[i].x, yi = poly[i].y;
+        const xj = poly[j].x, yj = poly[j].y;
+        const intersect = ((yi > y) != (yj > y)) &&
+          (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        if (intersect) inside = !inside;
+      }
+      return inside;
+    }
+
+    function isOnLand(x, y) {
+      return landmasses.some(poly => pointInPolygon(x, y, poly));
+    }
+
+    function update() {
+      if (isGameOver) return;
+
+      // --- Player Movement ---
+      ship.vx = 0;
+      ship.vy = 0;
+      
+      // キー入力があればターゲット移動をキャンセル (Override target move with keys)
+      let inputDetected = false;
+      if (keys["ArrowUp"]) { ship.vy = -ship.speed; inputDetected = true; }
+      if (keys["ArrowDown"]) { ship.vy = ship.speed; inputDetected = true; }
+      if (keys["ArrowLeft"]) { ship.vx = -ship.speed; inputDetected = true; }
+      if (keys["ArrowRight"]) { ship.vx = ship.speed; inputDetected = true; }
+
+      if (inputDetected) {
+        ship.activeTarget = false;
+      }
+
+      // ターゲットへ移動 (Move to target)
+      if (ship.activeTarget) {
+        const dx = ship.targetX - ship.x;
+        const dy = ship.targetY - ship.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+
+        if (dist < ship.speed) {
+          // 到着
+          ship.x = ship.targetX;
+          ship.y = ship.targetY;
+          ship.activeTarget = false;
+        } else {
+          const angle = Math.atan2(dy, dx);
+          ship.vx = Math.cos(angle) * ship.speed;
+          ship.vy = Math.sin(angle) * ship.speed;
+        }
+      }
+
+      const nextX = ship.x + ship.vx;
+      const nextY = ship.y + ship.vy;
+
+      if (!isOnLand(nextX, nextY)) {
+        ship.x = nextX;
+        ship.y = nextY;
+      }
+      ship.x = Math.max(0, Math.min(worldWidth, ship.x));
+      ship.y = Math.max(0, Math.min(worldHeight, ship.y));
+
+      // --- Enemy Logic ---
+      const now = Date.now();
+      
+      // スポーン
+      if (now - lastSpawnTime > spawnInterval) {
+        spawnEnemy();
+        lastSpawnTime = now;
+        
+        // 徐々にスポーン間隔を短くする (Complexity Scaling)
+        spawnInterval = Math.max(MIN_SPAWN_INTERVAL, spawnInterval - SPAWN_INTERVAL_DECREMENT);
+      }
+
+      enemies.forEach((enemy, eIdx) => {
+        const dx = ship.x - enemy.x;
+        const dy = ship.y - enemy.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+
+        if (dist < 800) { 
+          if (dist > 150) {
+             const angle = Math.atan2(dy, dx);
+             const nextEX = enemy.x + Math.cos(angle) * enemy.speed;
+             const nextEY = enemy.y + Math.sin(angle) * enemy.speed;
+             if (!isOnLand(nextEX, nextEY)) {
+               enemy.x = nextEX;
+               enemy.y = nextEY;
+             }
+          }
+
+          if (now - enemy.lastShot > enemy.shotInterval) {
+            const angle = Math.atan2(dy, dx);
+            enemyBullets.push({
+              x: enemy.x,
+              y: enemy.y,
+              vx: Math.cos(angle) * 6,
+              vy: Math.sin(angle) * 6,
+              life: 200
+            });
+            enemy.lastShot = now;
+          }
+        }
+      });
+
+      // --- Player Bullet Logic ---
+      for (let i = playerBullets.length - 1; i >= 0; i--) {
+        const b = playerBullets[i];
+        b.x += b.vx;
+        b.y += b.vy;
+        b.life--;
+
+        // 敵との衝突判定
+        for (let j = enemies.length - 1; j >= 0; j--) {
+          const e = enemies[j];
+          const edx = b.x - e.x;
+          const edy = b.y - e.y;
+          if (Math.sqrt(edx*edx + edy*edy) < e.size + 4) {
+             enemies.splice(j, 1);
+             playerBullets.splice(i, 1);
+             score += 100;
+             scoreDisplay.textContent = score;
+             break;
+          }
+        }
+
+        if (b && b.life <= 0) playerBullets.splice(i, 1);
+      }
+
+      // --- Enemy Bullet Logic ---
+      for (let i = enemyBullets.length - 1; i >= 0; i--) {
+        const b = enemyBullets[i];
+        b.x += b.vx;
+        b.y += b.vy;
+        b.life--;
+
+        const bdx = b.x - ship.x;
+        const bdy = b.y - ship.y;
+        if (Math.sqrt(bdx*bdx + bdy*bdy) < ship.size + 4) {
+          lives--;
+          lifeDisplay.textContent = lives;
+          enemyBullets.splice(i, 1);
+          if (lives <= 0) {
+            isGameOver = true;
+            
+            // ハイスコア更新と保存
+            if (score > highScore) {
+              highScore = score;
+              localStorage.setItem("seaGame_highScore", highScore);
+            }
+
+            // ゲームオーバー画面表示
+            finalScoreDisplay.textContent = score;
+            highScoreDisplay.textContent = highScore;
+            highScoreHUD.textContent = highScore;
+            gameOverScreen.style.display = "flex";
+          }
+          continue;
+        }
+
+        if (b.life <= 0) enemyBullets.splice(i, 1);
+      }
+    }
+
+    function draw() {
+      // 画面クリア
+      ctx.fillStyle = "#1e90ff"; 
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // カメラ計算
+      let camX = ship.x - canvas.width / 2;
+      let camY = ship.y - canvas.height / 2;
+      camX = Math.max(0, Math.min(worldWidth - canvas.width, camX));
+      camY = Math.max(0, Math.min(worldHeight - canvas.height, camY));
+
+      ctx.save();
+      ctx.translate(-camX, -camY);
+
+      // --- ワールド描画 ---
+
+      // 陸地
+      ctx.fillStyle = "#2ecc71";
+      ctx.strokeStyle = "#27ae60";
+      ctx.lineWidth = 2;
+      landmasses.forEach((poly) => {
+        ctx.beginPath();
+        ctx.moveTo(poly[0].x, poly[0].y);
+        for(let i=1; i<poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      });
+
+      // 敵船
+      enemies.forEach(enemy => {
+        ctx.fillStyle = "#ff4444"; 
+        ctx.beginPath();
+        ctx.arc(enemy.x, enemy.y, enemy.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "black";
+        ctx.beginPath();
+        ctx.arc(enemy.x, enemy.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // 敵の弾
+      ctx.fillStyle = "#ff00ff"; // 敵はマゼンタ
+      enemyBullets.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // プレイヤーの弾
+      ctx.fillStyle = "#ffff00"; // プレイヤーは黄色
+      playerBullets.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // ターゲットマーカー (Target Marker)
+      if (ship.activeTarget) {
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(ship.targetX, ship.targetY, 10, 0, Math.PI * 2);
+        ctx.moveTo(ship.targetX - 15, ship.targetY);
+        ctx.lineTo(ship.targetX + 15, ship.targetY);
+        ctx.moveTo(ship.targetX, ship.targetY - 15);
+        ctx.lineTo(ship.targetX, ship.targetY + 15);
+        ctx.stroke();
+      }
+
+      // プレイヤー船
+      ctx.fillStyle = "#ffffff";
+      if (isGameOver) ctx.fillStyle = "#555555"; // 死んだら暗く
+      ctx.beginPath();
+      ctx.moveTo(ship.x, ship.y - ship.size);
+      ctx.lineTo(ship.x - ship.size, ship.y + ship.size);
+      ctx.lineTo(ship.x + ship.size, ship.y + ship.size);
+      ctx.closePath();
+      ctx.fill();
+
+      // ワールド枠
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.3)";
+      ctx.lineWidth = 5;
+      ctx.strokeRect(0, 0, worldWidth, worldHeight);
+
+      ctx.restore();
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    loop();
+  </script>
+</body>
+</html>
+```
